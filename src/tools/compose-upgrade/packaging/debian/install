@@ -1,0 +1,2 @@
+bin/compose-upgrade usr/local/bin
+man/compose-upgrade.1 usr/share/man/man1

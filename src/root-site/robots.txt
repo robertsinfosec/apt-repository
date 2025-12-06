@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /docs/
+Disallow: /dists/
+Disallow: /pool/
+Sitemap: https://apt.robertsinfosec.com/sitemap.xml

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Placeholder sitemap; it will be generated and extended as the docs site grows. -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://apt.robertsinfosec.com/docs/</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <!-- Additional documentation URLs will be inserted by the docs site build. -->
+</urlset>

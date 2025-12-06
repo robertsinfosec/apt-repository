@@ -1,0 +1,15 @@
+Source: compose-upgrade
+Section: admin
+Priority: optional
+Maintainer: Roberts InfoSec <packages@robertsinfosec.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+
+Package: compose-upgrade
+Architecture: all
+Depends: ${misc:Depends}
+Description: compose-upgrade utility (placeholder)
+ Compose-upgrade helps orchestrate safe Docker Compose upgrades. This placeholder
+ release ships the script and manual page while the production implementation is
+ completed. Future releases will include the full upgrade orchestration logic.

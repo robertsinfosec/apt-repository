@@ -1,0 +1,8 @@
+Origin: robertsinfosec
+Label: robertsinfosec
+Suite: stable
+Codename: stable
+Architectures: amd64 arm64 source
+Components: main
+Description: robertsinfosec APT repository for published tools
+# SignWith can be set to a GPG key ID (or left unset to skip signing during local builds).

@@ -1,0 +1,118 @@
+name: Build and Deploy dist
+
+on:
+  push:
+    branches: [main]
+
+env:
+  # Set DEB_INPUTS to one or more paths (files or directories) containing .deb artifacts.
+  # Example: "artifacts" after a prior job downloads package artifacts there.
+  DEB_INPUTS: ${{ vars.DEB_INPUTS || 'artifacts' }}
+  # Optional docs build command, executed from src/docs-site/ (e.g., "npm ci && npm run build -- --outDir ../../dist/docs").
+  DOCS_BUILD_CMD: ${{ vars.DOCS_BUILD_CMD || '' }}
+  # Optional key ID/fingerprint for signing Release files (reprepro --sign-with).
+  REPO_SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY || '' }}
+
+jobs:
+  build-debs:
+    name: Build tool .deb artifacts
+    runs-on: [self-hosted, linux]
+    container:
+      image: node:20-bookworm
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev fakeroot gzip
+
+      - name: Build compose-upgrade .deb
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          ./src/tools/compose-upgrade/packaging/build-deb.sh artifacts 0.1.0
+
+      - name: Upload .deb artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tool-debs
+          path: artifacts
+          if-no-files-found: error
+
+  build-dist:
+    name: Build dist (APT + docs)
+    runs-on: [self-hosted, linux]
+    container:
+      image: node:20-bookworm
+    needs: build-debs
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y reprepro
+
+      - name: Download .deb artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: tool-debs
+          path: artifacts
+
+      - name: Build dist
+        env:
+          DOCS_BUILD_CMD: ${{ env.DOCS_BUILD_CMD }}
+          REPO_SIGNING_KEY: ${{ env.REPO_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          echo "Using DEB_INPUTS=${DEB_INPUTS}"
+          ./src/build-dist.sh ${DEB_INPUTS}
+
+      - name: Verify dist structure
+        run: |
+          set -euo pipefail
+          test -d dist/dists || { echo "dist/dists missing" >&2; exit 1; }
+          test -d dist/pool || { echo "dist/pool missing" >&2; exit 1; }
+          test -f dist/dists/stable/Release || { echo "Release missing" >&2; exit 1; }
+          find dist/pool -type f -name '*.deb' | grep -q . || { echo "No .deb files in dist/pool" >&2; exit 1; }
+          test -f dist/robots.txt || { echo "robots.txt missing" >&2; exit 1; }
+          test -f dist/sitemap.xml || { echo "sitemap.xml missing" >&2; exit 1; }
+          test -f dist/index.html || { echo "index.html missing" >&2; exit 1; }
+
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+          if-no-files-found: error
+
+  deploy-pages:
+    name: Deploy to Cloudflare Pages
+    needs: build-dist
+    runs-on: [self-hosted, linux]
+    container:
+      image: node:20-bookworm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download dist artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Publish to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: ${{ secrets.CLOUDFLARE_PAGES_PROJECT }}
+          directory: dist
+          branch: ${{ github.ref_name }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Report deployment directory
+        run: |
+          set -euo pipefail
+          echo "Deployed dist/ to Cloudflare Pages project ${CLOUDFLARE_PAGES_PROJECT}"

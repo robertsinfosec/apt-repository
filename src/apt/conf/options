@@ -1,0 +1,3 @@
+verbose
+ask-passphrase
+# basedir is supplied by the build script via -b to allow dist/ to be rebuilt safely.

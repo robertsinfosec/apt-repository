@@ -1,0 +1,294 @@
+#!/usr/bin/env bash
+# compose-upgrade - upgrade one or more Docker Compose projects safely and consistently.
+#
+# This tool is intentionally focused on Docker Compose stacks. It is not intended
+# for ad-hoc "docker run" containers. For those, consider a separate, dedicated
+# utility.
+
+set -euo pipefail
+IFS=$'\n\t'
+
+# Defaults (can be overridden via CLI flags)
+DRY_RUN=0
+PRUNE_IMAGES=0
+LOG_FILE=""
+STRICT_MODE=0    # if set, any failure causes non-zero exit
+NO_COLOR=0
+
+# Compose command will be an array, e.g. ("docker" "compose") or ("docker-compose")
+COMPOSE_CMD=()
+
+# Simple colors (disabled if NO_COLOR=1 or not a TTY)
+if [[ -t 1 ]]; then
+  COLOR_RESET=$'\033[0m'
+  COLOR_INFO=$'\033[1;34m'
+  COLOR_WARN=$'\033[1;33m'
+  COLOR_ERROR=$'\033[1;31m'
+else
+  COLOR_RESET=""
+  COLOR_INFO=""
+  COLOR_WARN=""
+  COLOR_ERROR=""
+fi
+
+log() {
+  local level="$1"; shift
+  local color_prefix=""
+  case "$level" in
+    INFO)  color_prefix=$COLOR_INFO ;;
+    WARN)  color_prefix=$COLOR_WARN ;;
+    ERROR) color_prefix=$COLOR_ERROR ;;
+    *)     color_prefix="" ;;
+  esac
+
+  local ts
+  ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  local msg="[$ts] [$level] $*"
+
+  if [[ "$NO_COLOR" -eq 0 && -n "$color_prefix" ]]; then
+    printf '%s%s%s\n' "$color_prefix" "$msg" "$COLOR_RESET" >&2
+  else
+    printf '%s\n' "$msg" >&2
+  fi
+
+  if [[ -n "$LOG_FILE" ]]; then
+    printf '%s\n' "$msg" >> "$LOG_FILE"
+  fi
+}
+
+die() {
+  log ERROR "$*"
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+compose-upgrade - upgrade one or more Docker Compose projects.
+
+Usage:
+  compose-upgrade [OPTIONS] [PROJECT_DIR ...]
+
+If no PROJECT_DIR is specified, the current directory (.) is used.
+
+Options:
+  -n, --dry-run          Show what would be done, but do not execute any docker commands.
+      --prune-images     After all projects upgrade successfully, run 'docker image prune -f'
+                         to remove dangling images (including old :latest layers no longer used).
+      --log-file FILE    Append logs to FILE in addition to stderr.
+      --strict           Exit with non-zero status if any project fails to upgrade.
+      --no-color         Disable colored log output.
+  -h, --help             Show this help message and exit.
+
+Notes:
+  - This tool is intentionally focused on Docker Compose stacks.
+  - It expects a working Docker daemon and either 'docker compose' or 'docker-compose'.
+  - It does not attempt to handle one-off 'docker run' containers.
+EOF
+}
+
+check_docker_installed() {
+  # We accept either modern 'docker' (with 'docker compose') or legacy 'docker-compose'.
+  if ! command -v docker >/dev/null 2>&1 && ! command -v docker-compose >/dev/null 2>&1; then
+    die "Neither 'docker' nor 'docker-compose' is installed or in PATH. Please install Docker before using compose-upgrade."
+  fi
+}
+
+detect_compose_cmd() {
+  # Allow override via environment variable, e.g. COMPOSE_UPGRADE_CMD="docker compose"
+  if [[ "${COMPOSE_UPGRADE_CMD:-}" != "" ]]; then
+    # shellcheck disable=SC2206
+    COMPOSE_CMD=($COMPOSE_UPGRADE_CMD)
+    return
+  fi
+
+  # Prefer "docker compose" if available
+  if command -v docker >/dev/null 2>&1; then
+    if docker compose version >/dev/null 2>&1; then
+      COMPOSE_CMD=(docker compose)
+      return
+    fi
+  fi
+
+  # Fallback to classic docker-compose if available
+  if command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD=(docker-compose)
+    return
+  fi
+
+  die "Could not find 'docker compose' or 'docker-compose'. Please install Docker Compose."
+}
+
+check_docker_daemon() {
+  if ! docker info >/dev/null 2>&1; then
+    die "Docker daemon does not appear to be running or accessible."
+  fi
+}
+
+run_cmd() {
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    log INFO "[dry-run] $*"
+  else
+    "$@"
+  fi
+}
+
+upgrade_project() {
+  local project_dir="$1"
+  local abs_dir
+
+  if [[ ! -d "$project_dir" ]]; then
+    log ERROR "Project directory does not exist: $project_dir"
+    return 1
+  fi
+
+  abs_dir=$(cd "$project_dir" && pwd)
+  log INFO "Upgrading Docker Compose project in: $abs_dir"
+
+  # Check that there is at least one compose file
+  local has_compose=0
+  if [[ -f "$abs_dir/docker-compose.yml" || -f "$abs_dir/docker-compose.yaml" || \
+        -f "$abs_dir/compose.yml" || -f "$abs_dir/compose.yaml" ]]; then
+    has_compose=1
+  fi
+
+  if [[ "$has_compose" -eq 0 ]]; then
+    log ERROR "No docker-compose.yml / docker-compose.yaml / compose.yml / compose.yaml found in $abs_dir"
+    return 1
+  fi
+
+  (
+    cd "$abs_dir"
+
+    # Validate compose config
+    log INFO "Validating compose configuration in $abs_dir"
+    run_cmd "${COMPOSE_CMD[@]}" config >/dev/null
+
+    # Pull updated images
+    log INFO "Pulling latest images for project in $abs_dir"
+    run_cmd "${COMPOSE_CMD[@]}" pull
+
+    # Recreate containers
+    log INFO "Recreating containers for project in $abs_dir"
+    run_cmd "${COMPOSE_CMD[@]}" up -d --remove-orphans
+  )
+}
+
+prune_images_if_requested() {
+  if [[ "$PRUNE_IMAGES" -eq 0 ]]; then
+    return 0
+  fi
+
+  log INFO "Pruning dangling images via 'docker image prune -f'"
+  run_cmd docker image prune -f
+}
+
+parse_args() {
+  local arg
+  local show_help=0
+
+  while [[ $# -gt 0 ]]; do
+    arg="$1"
+    case "$arg" in
+      -n|--dry-run)
+        DRY_RUN=1
+        shift
+        ;;
+      --prune-images)
+        PRUNE_IMAGES=1
+        shift
+        ;;
+      --log-file)
+        if [[ $# -lt 2 ]]; then
+          die "--log-file requires a path argument"
+        fi
+        LOG_FILE="$2"
+        shift 2
+        ;;
+      --strict)
+        STRICT_MODE=1
+        shift
+        ;;
+      --no-color)
+        NO_COLOR=1
+        shift
+        ;;
+      -h|--help)
+        show_help=1
+        shift
+        ;;
+      --)
+        shift
+        break
+        ;;
+      -*)
+        die "Unknown option: $arg (see --help)"
+        ;;
+      *)
+        # First non-flag, stop parsing options
+        break
+        ;;
+    esac
+  done
+
+  if [[ "$show_help" -eq 1 ]]; then
+    usage
+    exit 0
+  fi
+
+  # Remaining args are project directories (if any)
+  if [[ $# -gt 0 ]]; then
+    PROJECT_DIRS=("$@")
+  else
+    PROJECT_DIRS=(".")
+  fi
+}
+
+main() {
+  check_docker_installed
+  detect_compose_cmd
+  check_docker_daemon
+
+  parse_args "$@"
+
+  if [[ -n "$LOG_FILE" ]]; then
+    # Ensure log file directory exists and is writable
+    mkdir -p "$(dirname "$LOG_FILE")"
+    touch "$LOG_FILE" || die "Unable to write to log file: $LOG_FILE"
+  fi
+
+  log INFO "Using compose command: ${COMPOSE_CMD[*]}"
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    log INFO "Dry-run mode enabled; no docker commands will be executed."
+  fi
+
+  local total=0
+  local success=0
+  local failed=0
+
+  for dir in "${PROJECT_DIRS[@]}"; do
+    total=$((total + 1))
+    if upgrade_project "$dir"; then
+      success=$((success + 1))
+    else
+      failed=$((failed + 1))
+      if [[ "$STRICT_MODE" -eq 1 ]]; then
+        log ERROR "Stopping due to failure (strict mode enabled)."
+        exit 1
+      fi
+    fi
+  done
+
+  if [[ "$failed" -eq 0 ]]; then
+    prune_images_if_requested
+  else
+    log WARN "Skipping image prune because one or more projects failed to upgrade."
+  fi
+
+  log INFO "Upgrade summary: total=$total, success=$success, failed=$failed"
+
+  if [[ "$failed" -gt 0 ]]; then
+    exit 1
+  fi
+}
+
+main "$@"

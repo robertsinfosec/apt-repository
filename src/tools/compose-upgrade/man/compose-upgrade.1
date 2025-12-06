@@ -1,0 +1,221 @@
+.\" ============================================================================
+.\" compose-upgrade.1 - manual page
+.\" ============================================================================
+.TH COMPOSE-UPGRADE 1 "2025-12-06" "compose-upgrade 0.1.0" "User Commands"
+.SH NAME
+compose-upgrade \- safely upgrade one or more Docker Compose projects
+
+.SH SYNOPSIS
+.B compose-upgrade
+.RI [ OPTIONS ] " [PROJECT_DIR ...]"
+
+.SH DESCRIPTION
+.B compose-upgrade
+is a helper utility for upgrading one or more Docker Compose projects in a
+consistent, auditable way. It is intended for long-lived services that are
+defined by a Compose file and managed with
+.BR "docker compose"
+or
+.BR docker-compose .
+The tool performs configuration validation, pulls updated images, and recreates
+containers using the Compose project configuration.
+
+If one or more
+.I PROJECT_DIR
+arguments are specified, each directory is treated as the root of a Docker
+Compose project. If no project directory is given, the current directory
+.RB ( . )
+is used. A project directory is considered valid if it contains at least one of
+the following files:
+.IR docker-compose.yml ,
+.IR docker-compose.yaml ,
+.IR compose.yml ,
+or
+.IR compose.yaml .
+
+This command is intentionally focused on Compose-managed workloads and does not
+attempt to upgrade arbitrary containers created with ad-hoc
+.B docker run
+commands. For such containers, use a separate utility or migrate them into
+Compose projects before using
+.BR compose-upgrade .
+
+.SH OPTIONS
+.TP
+.BR \-n ", " \-\-dry\-run
+Enable dry-run mode. When this option is used,
+.B compose-upgrade
+prints the actions it would perform but does not execute any Docker or Docker
+Compose commands. This is useful for validating which projects would be
+touched and in which order.
+
+.TP
+.B \-\-prune\-images
+After all projects have been processed and if no project failed, run
+.BR "docker image prune \-f"
+to remove dangling images. This can reclaim disk space from unused layers after
+upgrading stacks that track
+.B :latest
+or other moving tags. If any project fails, the prune step is skipped.
+
+.TP
+.BI \-\-log\-file " FILE"
+Append log output to
+.IR FILE
+in addition to standard error. The file is created if it does not exist. This
+is useful when
+.B compose-upgrade
+is used from cron, systemd timers, or other unattended automation that
+requires persistent logs.
+
+.TP
+.B \-\-strict
+Enable strict mode. When this option is set,
+.B compose-upgrade
+exits immediately with a non-zero status as soon as any project fails to
+upgrade. Without strict mode, the command continues processing remaining
+projects and reports a summary at the end, returning a non-zero status if any
+project failed.
+
+.TP
+.B \-\-no\-color
+Disable ANSI color codes in log output. This is useful when logs are being
+captured by tooling that does not handle color codes correctly.
+
+.TP
+.BR \-h ", " \-\-help
+Display a brief usage summary and exit.
+
+.SH ENVIRONMENT
+.TP
+.B COMPOSE_UPGRADE_CMD
+If set, overrides the Docker Compose command used by
+.BR compose-upgrade .
+The value is split on whitespace and executed as a command.
+This can be used to force a particular binary or wrapper, for example:
+.RS
+.nf
+COMPOSE_UPGRADE_CMD="docker compose"
+COMPOSE_UPGRADE_CMD="/usr/local/bin/docker-compose"
+.fi
+.RE
+
+.SH OPERATION
+For each project directory,
+.B compose-upgrade
+performs the following steps:
+
+.IP 1. 4
+Verify that the directory exists and contains at least one recognized Compose
+file. If no Compose file is found, the project is reported as failed.
+
+.IP 2. 4
+Run
+.BR "docker compose config"
+or
+.BR "docker-compose config"
+to validate the Compose configuration. In dry-run mode, this is logged but not
+executed.
+
+.IP 3. 4
+Run
+.BR "docker compose pull"
+or
+.BR "docker-compose pull"
+to pull updated images referenced by the project.
+
+.IP 4. 4
+Run
+.BR "docker compose up \-d \-\-remove\-orphans"
+or the equivalent
+.BR docker-compose
+command to recreate containers in detached mode and remove orphaned containers
+no longer defined in the Compose configuration.
+
+If
+.BR \-\-prune\-images
+is specified, and all projects complete successfully, a final
+.BR "docker image prune \-f"
+is performed to remove dangling images. In dry-run mode, all of these
+operations are logged but not executed.
+
+.SH EXIT STATUS
+The exit status of
+.B compose-upgrade
+is intended to be useful for scripting and automation.
+
+.TP
+.B 0
+All requested projects were processed successfully and, if requested, image
+pruning completed without error.
+
+.TP
+.B 1
+One or more errors occurred. This can include missing prerequisites (for
+example, Docker or Docker Compose not installed, or the Docker daemon not
+available), invalid project directories, missing Compose files, or failures in
+Compose operations. When
+.BR \-\-strict
+is used, this status is returned immediately upon the first project failure.
+
+.SH EXAMPLES
+.TP
+Upgrade the Compose project in the current directory:
+.RS
+.nf
+compose-upgrade
+.fi
+.RE
+
+.TP
+Upgrade two specific projects under
+.BR /opt :
+.RS
+.nf
+compose-upgrade /opt/psa /opt/rmm
+.fi
+.RE
+
+.TP
+Show what would be done, without executing any Docker commands:
+.RS
+.nf
+compose-upgrade --dry-run /opt/psa /opt/rmm
+.fi
+.RE
+
+.TP
+Upgrade all specified projects, prune dangling images if successful, and log to a file:
+.RS
+.nf
+compose-upgrade --prune-images \\
+                --log-file /var/log/compose-upgrade.log \\
+                /opt/psa /opt/rmm
+.fi
+.RE
+
+.TP
+Use strict mode so that a failure in one project stops processing immediately:
+.RS
+.nf
+compose-upgrade --strict /opt/psa /opt/rmm /opt/cloud
+.fi
+.RE
+
+.SH FILES
+.TP
+.I /usr/local/bin/compose-upgrade
+Typical installation path for the
+.B compose-upgrade
+executable script.
+
+.SH SEE ALSO
+.BR docker (1),
+.BR docker-compose (1)
+
+.SH AUTHOR
+Written by robertsinfosec.
+
+.SH COPYRIGHT
+This program is distributed under an open source license. Refer to the
+packaging or project documentation for licensing details.

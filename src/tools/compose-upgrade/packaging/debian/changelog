@@ -1,0 +1,5 @@
+compose-upgrade (0.1.0-1) unstable; urgency=medium
+
+  * Initial placeholder package built from monorepo tooling.
+
+ -- Roberts InfoSec <packages@robertsinfosec.com>  Sat, 06 Dec 2025 00:00:00 +0000
