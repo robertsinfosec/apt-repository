@@ -1,0 +1,34 @@
+{
+  "name": "apt-repository devcontainer",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "remoteUser": "vscode",
+  "features": {},
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "editor.formatOnSave": true
+      },
+      "extensions": [
+        "ms-azuretools.vscode-docker",
+        "ms-vscode.cpptools",
+        "redhat.vscode-yaml",
+        "mhutchie.git-graph",
+        "editorconfig.editorconfig",
+        "streetsidesoftware.code-spell-checker"
+      ]
+    }
+  },
+  "mounts": [
+    "source=${localEnv:HOME}/.gitconfig,target=/tmp/host_gitconfig,type=bind",
+    "source=${localEnv:HOME}/.ssh,target=/home/vscode/.ssh,type=bind"
+  ],
+  "postCreateCommand": "bash .devcontainer/setup.sh && if [ -f /tmp/host_gitconfig ]; then rm -f /home/vscode/.gitconfig ; cp /tmp/host_gitconfig /home/vscode/.gitconfig && sed -i 's|${localEnv:HOME}/.ssh|/home/vscode/.ssh|g' /home/vscode/.gitconfig ; fi && if [ -f /home/vscode/.ssh/id_rsa ]; then chmod 600 /home/vscode/.ssh/id_rsa ; fi && if [ -f /home/vscode/.ssh/id_ed25519 ]; then chmod 600 /home/vscode/.ssh/id_ed25519 ; fi && sudo mandb || true",
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "4gb"
+  }
+}
